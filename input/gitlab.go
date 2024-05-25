@@ -141,7 +141,8 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 	const pipelineCreateString = "[\x0312{{ .Project.Name }}\x03] Pipeline for commit {{ .Pipeline.Commit }} {{ .Pipeline.Status }} {{ .Project.WebURL }}/pipelines/{{ .Pipeline.ID }}"
 	const pipelineCompleteString = "[\x0312{{ .Project.Name }}\x03] Pipeline for commit {{ .Pipeline.Commit }} {{ .Pipeline.Status }} in {{ .Pipeline.Duration }} seconds {{ .Project.WebURL }}/pipelines/{{ .Pipeline.ID }}"
 	const jobCompleteString = "[\x0312{{ .Repository.Name }}\x03] Job \x0308{{ .Name }}\x03 for commit {{ .Commit }} {{ .Status }} in {{ .Duration }} seconds {{ .Repository.Homepage }}/-/jobs/{{ .ID }}"
-
+    const emojiString = "[\x0312{{ .Project.Name }}\x03] {{ .User.Name }} awarded an emoji :{{ .Emoji.Name }}: on {{ .Emoji.AwardedOnType }} {{ .Emoji.AwardedOnUrl }}"
+ 
 	JobStatus := map[string]string{
 		"pending": "is \x0315pending\x03",
 		"created": "was \x0315created\x03",
@@ -170,6 +171,7 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 	pipelineCreateTemplate := template.Must(template.New("pipeline create notification").Parse(pipelineCreateString))
 	pipelineCompleteTemplate := template.Must(template.New("pipeline complete notification").Parse(pipelineCompleteString))
 	jobCompleteTemplate := template.Must(template.New("job complete notification").Parse(jobCompleteString))
+    emojiTemplate := template.Must(template.New("emoji notification").Parse(emojiString))
 
 	return func(wr http.ResponseWriter, req *http.Request) {
 		defer req.Body.Close()
@@ -187,7 +189,8 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 		}
 
 		type User struct {
-			Name string `json:"name"`
+			Name string 	`json:"name"`
+			Username string `json:"username"`
 		}
 
 		type Issue struct {
@@ -265,6 +268,16 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 			Duration   float64    `json:"build_duration"`
 			Commit     string     `json:"sha"`
 			Repository Repository `json:"repository"`
+		}
+		type Emoji struct {
+            Name string             `json:"name"`
+            AwardedOnType string    `json:"awardable_type"`
+            AwardedOnUrl string     `json:"awarded_on_url"`
+		}
+		type EmojiEvent struct {
+			User User           `json:"user"`
+			Type string			`json:"event_type"`
+			Emoji Emoji 		`json:"object_attributes"`
 		}
 
 		var buf bytes.Buffer
@@ -438,6 +451,28 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 				}
 			}
 
+        case "Emoji Hook":
+            var emojiEvent EmojiEvent
+            if err := decoder.Decode(&mergeEvent); err != nil {
+                log.Error(err)
+                return
+            }
+
+            var buf bytes.Buffer
+            if err := emojiTemplate.Execute(&buf, struct {
+                Project     Project
+                User        User
+                Emoji       Emoji
+            }{
+                Project: emojiEvent.Project,
+                User:    emojiEvent.User,
+                Emoji:   emojiEvent.Emoji,
+            }); err != nil {
+                http.Error(wr, err.Error(), http.StatusInternalServerError)
+                return
+            }
+
+            m.sendMessage(buf.String(), emojiEvent.Project.Name, emojiEvent.Project.PathWithNamespace)
 		default:
 			log.WithFields(log.Fields{
 				"EventType": eventType,
