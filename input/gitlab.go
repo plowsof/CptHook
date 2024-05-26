@@ -270,9 +270,10 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 			Repository Repository `json:"repository"`
 		}
 		type Emoji struct {
-            Name string             `json:"name"`
-            AwardedOnType string    `json:"awardable_type"`
-            AwardedOnUrl string     `json:"awarded_on_url"`
+            Project         string    `json:"project"`  
+            Name            string    `json:"name"`
+            AwardedOnType   string    `json:"awardable_type"`
+            AwardedOnUrl    string    `json:"awarded_on_url"`
 		}
 		type EmojiEvent struct {
 			User User           `json:"user"`
@@ -453,7 +454,7 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 
         case "Emoji Hook":
             var emojiEvent EmojiEvent
-            if err := decoder.Decode(&mergeEvent); err != nil {
+            if err := decoder.Decode(&emojiEvent); err != nil {
                 log.Error(err)
                 return
             }
