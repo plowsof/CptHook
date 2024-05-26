@@ -10,6 +10,8 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
+    "github.com/enescakir/emoji"
+
 	"github.com/spf13/viper"
 )
 
@@ -141,8 +143,9 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 	const pipelineCreateString = "[\x0312{{ .Project.Name }}\x03] Pipeline for commit {{ .Pipeline.Commit }} {{ .Pipeline.Status }} {{ .Project.WebURL }}/pipelines/{{ .Pipeline.ID }}"
 	const pipelineCompleteString = "[\x0312{{ .Project.Name }}\x03] Pipeline for commit {{ .Pipeline.Commit }} {{ .Pipeline.Status }} in {{ .Pipeline.Duration }} seconds {{ .Project.WebURL }}/pipelines/{{ .Pipeline.ID }}"
 	const jobCompleteString = "[\x0312{{ .Repository.Name }}\x03] Job \x0308{{ .Name }}\x03 for commit {{ .Commit }} {{ .Status }} in {{ .Duration }} seconds {{ .Repository.Homepage }}/-/jobs/{{ .ID }}"
-    const emojiString = "[\x0312{{ .Project.Name }}\x03] {{ .User.Name }} awarded an emoji :{{ .Emoji.Name }}: on {{ .Emoji.AwardedOnType }} {{ .Emoji.AwardedOnUrl }}"
- 
+    const emojiAwardString = emoji.Parse("[\x0312{{ .Project.Name }}\x03] {{ .User.Username }} awarded an emoji :{{ .Emoji.Name }}: on {{ .Emoji.AwardedOnType }} {{ .Emoji.AwardedOnUrl }}")
+    const emojiRevokeString = emoji.Parse("[\x0312{{ .Project.Name }}\x03] {{ .User.Username }} revoked an emoji :{{ .Emoji.Name }}: on {{ .Emoji.AwardedOnType }} {{ .Emoji.AwardedOnUrl }}")
+
 	JobStatus := map[string]string{
 		"pending": "is \x0315pending\x03",
 		"created": "was \x0315created\x03",
@@ -171,8 +174,8 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 	pipelineCreateTemplate := template.Must(template.New("pipeline create notification").Parse(pipelineCreateString))
 	pipelineCompleteTemplate := template.Must(template.New("pipeline complete notification").Parse(pipelineCompleteString))
 	jobCompleteTemplate := template.Must(template.New("job complete notification").Parse(jobCompleteString))
-    emojiTemplate := template.Must(template.New("emoji notification").Parse(emojiString))
-
+    emojiAwardTemplate := template.Must(template.New("emoji awarded notification").Parse(emojiAwardString))
+    emojiRevokeTemplate := template.Must(template.New("emoji revoked notification").Parse(emojiRevokeString))
 	return func(wr http.ResponseWriter, req *http.Request) {
 		defer req.Body.Close()
 		decoder := json.NewDecoder(req.Body)
@@ -460,17 +463,11 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
             }
 
             var buf bytes.Buffer
-            if err := emojiTemplate.Execute(&buf, struct {
-                Project     Project
-                User        User
-                Emoji       Emoji
-            }{
-                Project: emojiEvent.Project,
-                User:    emojiEvent.User,
-                Emoji:   emojiEvent.Emoji,
-            }); err != nil {
-                http.Error(wr, err.Error(), http.StatusInternalServerError)
-                return
+            if emojiEvent.Type == "revoke" {
+                emojiRevokeTemplate.Execute(&buf, &emojiEvent)
+            }
+            else {
+                emojiAwardTemplate.Execute(&buf, &emojiEvent)
             }
 
             m.sendMessage(buf.String(), emojiEvent.Project.Name, emojiEvent.Project.PathWithNamespace)
