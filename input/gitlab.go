@@ -10,9 +10,11 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
-	"github.com/enescakir/emoji"
+    "github.com/enescakir/emoji"
 
 	"github.com/spf13/viper"
+	"github.com/go-resty/resty/v2"
+
 )
 
 type GitlabModule struct {
@@ -143,8 +145,8 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 	const pipelineCreateString = "[\x0312{{ .Project.Name }}\x03] Pipeline for commit {{ .Pipeline.Commit }} {{ .Pipeline.Status }} {{ .Project.WebURL }}/pipelines/{{ .Pipeline.ID }}"
 	const pipelineCompleteString = "[\x0312{{ .Project.Name }}\x03] Pipeline for commit {{ .Pipeline.Commit }} {{ .Pipeline.Status }} in {{ .Pipeline.Duration }} seconds {{ .Project.WebURL }}/pipelines/{{ .Pipeline.ID }}"
 	const jobCompleteString = "[\x0312{{ .Repository.Name }}\x03] Job \x0308{{ .Name }}\x03 for commit {{ .Commit }} {{ .Status }} in {{ .Duration }} seconds {{ .Repository.Homepage }}/-/jobs/{{ .ID }}"
-	const emojiAwardString = emoji.Parse("[\x0312{{ .Project.Name }}\x03] {{ .User.Username }} awarded an emoji :{{ .Emoji.Name }}: on {{ .Emoji.AwardedOnType }} {{ .Emoji.AwardedOnUrl }}")
-	const emojiRevokeString = emoji.Parse("[\x0312{{ .Project.Name }}\x03] {{ .User.Username }} revoked an emoji :{{ .Emoji.Name }}: on {{ .Emoji.AwardedOnType }} {{ .Emoji.AwardedOnUrl }}")
+        const emojiAwardString = "[\x0312{{ .Project.Name }}\x03] {{ .User.Username }} awarded an emoji :{{ .Emoji.Name }}: on {{ .Emoji.AwardedOnType }} {{ .Emoji.AwardedOnUrl }}"
+        const emojiRevokeString = "[\x0312{{ .Project.Name }}\x03] {{ .User.Username }} revoked an emoji :{{ .Emoji.Name }}: on {{ .Emoji.AwardedOnType }} {{ .Emoji.AwardedOnUrl }}"
 
 	JobStatus := map[string]string{
 		"pending": "is \x0315pending\x03",
@@ -174,8 +176,8 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 	pipelineCreateTemplate := template.Must(template.New("pipeline create notification").Parse(pipelineCreateString))
 	pipelineCompleteTemplate := template.Must(template.New("pipeline complete notification").Parse(pipelineCompleteString))
 	jobCompleteTemplate := template.Must(template.New("job complete notification").Parse(jobCompleteString))
-	emojiAwardTemplate := template.Must(template.New("emoji awarded notification").Parse(emojiAwardString))
-	emojiRevokeTemplate := template.Must(template.New("emoji revoked notification").Parse(emojiRevokeString))
+        emojiAwardTemplate := template.Must(template.New("emoji awarded notification").Parse(emojiAwardString))
+        emojiRevokeTemplate := template.Must(template.New("emoji revoked notification").Parse(emojiRevokeString))
 	return func(wr http.ResponseWriter, req *http.Request) {
 		defer req.Body.Close()
 		decoder := json.NewDecoder(req.Body)
@@ -192,7 +194,7 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 		}
 
 		type User struct {
-			Name string     `json:"name"`
+			Name string 	`json:"name"`
 			Username string `json:"username"`
 		}
 
@@ -273,12 +275,12 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 			Repository Repository `json:"repository"`
 		}
 		type Emoji struct {
-			Project         string    `json:"project"`  
-			Name            string    `json:"name"`
-			AwardedOnType   string    `json:"awardable_type"`
-			AwardedOnUrl    string    `json:"awarded_on_url"`
+                        Name            string    `json:"name"`
+                        AwardedOnType   string    `json:"awardable_type"`
+                        AwardedOnUrl    string    `json:"awarded_on_url"`
 		}
 		type EmojiEvent struct {
+                        Project Project     `json:"project"`
 			User User           `json:"user"`
 			Type string         `json:"event_type"`
 			Emoji Emoji         `json:"object_attributes"`
@@ -360,8 +362,27 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 
 			mergeTemplate.Execute(&buf, &mergeEvent)
 
-			m.sendMessage(buf.String(), mergeEvent.Project.Name, mergeEvent.Project.PathWithNamespace)
+			m.sendMessage(emoji.Parse(buf.String()), mergeEvent.Project.Name, mergeEvent.Project.PathWithNamespace)
+                        if mergeEvent.Merge.Action == "closed" {
+			        // Create a Resty Client
+                                client := resty.New()
 
+                                // POST JSON string
+                                resp, err := client.R().
+                                SetHeader("Content-Type", "application/json").
+                                SetBody(`{"message": emoji.Parse(buf.String()), "password":"hunter2"}`).
+                                Post("http:// some url dot com /message")
+
+                          	if err != nil {
+		                        log.Println("Error sending request:", err)
+		                        return
+	                        }
+
+                         	if resp.StatusCode() != http.StatusOK {
+		                        log.Println("Non-OK HTTP status:", resp.StatusCode())
+	                        }
+
+		        }
 		case "Issue Hook", "Issue Event":
 			var issueEvent IssueEvent
 			if err := decoder.Decode(&issueEvent); err != nil {
@@ -455,21 +476,21 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 				}
 			}
 
-		case "Emoji Hook":
-			var emojiEvent EmojiEvent
-			if err := decoder.Decode(&emojiEvent); err != nil {
-				log.Error(err)
-				return
-			}
+        case "Emoji Hook":
+            var emojiEvent EmojiEvent
+            if err := decoder.Decode(&emojiEvent); err != nil {
+                log.Error(err)
+                return
+            }
 
-			var buf bytes.Buffer
-			if emojiEvent.Type == "revoke" {
-				emojiRevokeTemplate.Execute(&buf, &emojiEvent)
-			} else {
-				emojiAwardTemplate.Execute(&buf, &emojiEvent)
-			}
+            var buf bytes.Buffer
+            if emojiEvent.Type == "revoke" {
+                emojiRevokeTemplate.Execute(&buf, &emojiEvent)
+            } else {
+                emojiAwardTemplate.Execute(&buf, &emojiEvent)
+            }
 
-			m.sendMessage(buf.String(), emojiEvent.Project.Name, emojiEvent.Project.PathWithNamespace)
+            m.sendMessage(buf.String(), emojiEvent.Project.Name, emojiEvent.Project.PathWithNamespace)
 		default:
 			log.WithFields(log.Fields{
 				"EventType": eventType,
