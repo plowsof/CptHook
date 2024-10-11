@@ -147,6 +147,7 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 	const jobCompleteString = "[\x0312{{ .Repository.Name }}\x03] Job \x0308{{ .Name }}\x03 for commit {{ .Commit }} {{ .Status }} in {{ .Duration }} seconds {{ .Repository.Homepage }}/-/jobs/{{ .ID }}"
         const emojiAwardString = "[\x0312{{ .Project.Name }}\x03] {{ .User.Username }} awarded an emoji :{{ .Emoji.Name }}: on {{ .Emoji.AwardedOnType }} {{ .Emoji.AwardedOnUrl }}"
         const emojiRevokeString = "[\x0312{{ .Project.Name }}\x03] {{ .User.Username }} revoked an emoji :{{ .Emoji.Name }}: on {{ .Emoji.AwardedOnType }} {{ .Emoji.AwardedOnUrl }}"
+        const noteString = "{{ .User.Name }} commented @ {{ .Note.URL }}"
 
 	JobStatus := map[string]string{
 		"pending": "is \x0315pending\x03",
@@ -178,6 +179,8 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
 	jobCompleteTemplate := template.Must(template.New("job complete notification").Parse(jobCompleteString))
         emojiAwardTemplate := template.Must(template.New("emoji awarded notification").Parse(emojiAwardString))
         emojiRevokeTemplate := template.Must(template.New("emoji revoked notification").Parse(emojiRevokeString))
+	    noteCreateTemplate := template.Must(template.New("Note created/updates").Parse(noteString))
+
 	return func(wr http.ResponseWriter, req *http.Request) {
 		defer req.Body.Close()
 		decoder := json.NewDecoder(req.Body)
@@ -280,10 +283,19 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
                         AwardedOnUrl    string    `json:"awarded_on_url"`
 		}
 		type EmojiEvent struct {
-                        Project Project     `json:"project"`
+            Project Project     `json:"project"`
 			User User           `json:"user"`
 			Type string         `json:"event_type"`
 			Emoji Emoji         `json:"object_attributes"`
+		}
+
+		type Note struct {
+			Url string 			`json:"url"`
+			Action string 		`json:"action"`
+		}
+		type NoteEvent struct {
+			User User           `json:"user"`
+			Note Note           `json:"object_attributes"`
 		}
 
 		var buf bytes.Buffer
@@ -491,6 +503,19 @@ func (m GitlabModule) GetHandler() http.HandlerFunc {
             }
 
             m.sendMessage(buf.String(), emojiEvent.Project.Name, emojiEvent.Project.PathWithNamespace)
+
+        case "Note hook":
+        	var noteEvent NoteEvent
+      		if err := decoder.Decode(&noteEvent); err != nil {
+                log.Error(err)
+                return
+            }
+            var buf bytes.Buffer
+            // can be 'create' or 'update'. fow now just treat both as the same
+            noteTemplate.Execute(&buf, &noteEvent)
+            //todo edit
+            m.sendMessage(buf.String(), noteEvent.User.Name, noteEvent.Note.Url)
+
 		default:
 			log.WithFields(log.Fields{
 				"EventType": eventType,
